@@ -339,7 +339,10 @@ void dt_image_film_roll(const dt_image_t *img,
 dt_imageio_write_xmp_t dt_image_get_xmp_mode()
 {
   dt_imageio_write_xmp_t res = DT_WRITE_XMP_NEVER;
+
   if(darktable.gimp.mode) return res;
+
+  dt_conf_set_bool( "write_sidecar_on_export", FALSE );
 
   const char *config = dt_conf_get_string_const("write_sidecar_files");
   if(config)
@@ -348,6 +351,11 @@ dt_imageio_write_xmp_t dt_image_get_xmp_mode()
       res = DT_WRITE_XMP_LAZY;
     else if(!strcmp(config, "on import"))
       res = DT_WRITE_XMP_ALWAYS;
+    else if(!strcmp(config, "on export"))
+    {
+      dt_conf_set_bool( "write_sidecar_on_export", TRUE );
+      res = DT_WRITE_XMP_NEVER; /* for clarity of intention */
+    }
     else if(!strcmp(config, "TRUE"))
     {
       // migration path from boolean settings in <= 3.6, lazy mode was
