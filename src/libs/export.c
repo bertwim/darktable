@@ -378,8 +378,15 @@ static void _export_button_clicked(GtkWidget *widget, dt_lib_export_t *d)
   g_free(icc_filename);
 
   _scale_optim();
+
   gtk_entry_set_text(GTK_ENTRY(d->scale),
                      dt_conf_get_string_const(CONFIG_PREFIX "resizing_factor"));
+
+  // Optionally write the sidecar file.
+  if (dt_conf_get_bool( "write_sidecar_on_export" ) )
+  {
+    dt_control_write_sidecar_files();
+  }
 }
 
 static void _scale_changed(GtkEntry *spin,
