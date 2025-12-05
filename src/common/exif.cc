@@ -6077,121 +6077,21 @@ gboolean dt_exif_xmp_attach_export(const dt_imgid_t imgid,
     return TRUE;
   }
 }
-#if 0
+
+//================================================================================
 // Write XMP sidecar file: returns TRUE in case of errors.
-gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
-                           const char *filename,
-                           const gboolean force_write)
-{
-  // Refuse to write sidecar for non-existent image:
-  char imgfname[PATH_MAX] = { 0 };
-  gboolean from_cache = TRUE;
-
-  dt_image_full_path(imgid, imgfname, sizeof(imgfname), &from_cache);
-  if(!g_file_test(imgfname, G_FILE_TEST_IS_REGULAR)) return TRUE;
-
-  try
-  {
-    Lock lock;
-    Exiv2::XmpData xmpData;
-    std::string xmpPacket;
-    char *checksum_old = NULL;
-    if(!force_write && g_file_test(filename, G_FILE_TEST_EXISTS))
-    {
-      // we want to avoid writing the sidecar file if it didn't change
-      // to avoid issues when using the same images from different
-      // computers. Sample use case: images on NAS, several computers
-      // using them NOT AT THE SAME TIME and the XMP crawler is used
-      // to find changed sidecars.
-      errno = 0;
-      size_t end;
-      unsigned char *content = (unsigned char*)dt_read_file(filename, &end);
-      if(content)
-      {
-        checksum_old = g_compute_checksum_for_data(G_CHECKSUM_MD5, content, end);
-        free(content);
-      }
-      else
-      {
-        dt_print(DT_DEBUG_ALWAYS,
-                 "cannot read XMP file '%s': '%s'", filename, strerror(errno));
-        dt_control_log(_("cannot read XMP file '%s': '%s'"), filename, strerror(errno));
-      }
-
-      Exiv2::DataBuf buf = Exiv2::readFile(WIDEN(filename));
-#if EXIV2_TEST_VERSION(0,28,0)
-      xmpPacket.assign(buf.c_str(), buf.size());
-#else
-      xmpPacket.assign(reinterpret_cast<char *>(buf.pData_), buf.size_);
-#endif
-      Exiv2::XmpParser::decode(xmpData, xmpPacket);
-
-      // Because XmpSeq or XmpBag are added to the list, we first have to
-      // remove these so that we don't end up with a string of duplicates.
-      _remove_known_keys(xmpData);
-    }
-
-    // Initialize xmp data:
-    _exif_xmp_read_data(xmpData, imgid, "dt_exif_xmp_write");
-
-    // Serialize the xmp data and output the xmp packet.
-    if(Exiv2::XmpParser::encode(xmpPacket, xmpData,
-       Exiv2::XmpParser::useCompactFormat | Exiv2::XmpParser::omitPacketWrapper) != 0)
-    {
-      throw Exiv2::Error(Exiv2::ErrorCode::kerErrorMessage, "[xmp_write] failed to serialize xmp data");
-    }
-
-    // Hash the new data and compare it to the old hash (if applicable).
-    const char *xml_header = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    gboolean write_sidecar = TRUE;
-    if(checksum_old)
-    {
-      GChecksum *checksum = g_checksum_new(G_CHECKSUM_MD5);
-      if(checksum)
-      {
-        g_checksum_update(checksum, (unsigned char*)xml_header, -1);
-        g_checksum_update(checksum, (unsigned char*)xmpPacket.c_str(), -1);
-        const char *checksum_new = g_checksum_get_string(checksum);
-        write_sidecar = g_strcmp0(checksum_old, checksum_new) != 0;
-        g_checksum_free(checksum);
-      }
-      g_free(checksum_old);
-    }
-
-    if(write_sidecar)
-    {
-      // Using std::ofstream isn't possible here -- on Windows it
-      // doesn't support Unicode filenames with mingw.
-      errno = 0;
-      FILE *fout = g_fopen(filename, "wb");
-      if(fout)
-      {
-        fprintf(fout, "%s", xml_header);
-        fprintf(fout, "%s", xmpPacket.c_str());
-        fclose(fout);
-      }
-      else
-      {
-        dt_print(DT_DEBUG_ALWAYS,
-                 "cannot write XMP file '%s': '%s'", filename, strerror(errno));
-        dt_control_log(_("cannot write XMP file '%s': '%s'"), filename, strerror(errno));
-        return TRUE;
-      }
-    }
-
-    return FALSE;
-  }
-  catch(const Exiv2::AnyError &e)
-  {
-    dt_print(DT_DEBUG_IMAGEIO,
-             "[dt_exif_xmp_write] %s: caught exiv2 exception '%s'",
-             filename,
-             e.what());
-    return TRUE;
-  }
-}
-#else
-// Write XMP sidecar file: returns TRUE in case of errors.
+// To decide if an xmp should be written, (possibly overwriting an existing one) the
+// strategy is to compare two checksums
+//   - the checksum corresponding to an xmp-file already on disk, if present.
+//   - the checksum corresponding to the xmp data from the database.
+// If these checksums differ, a new xmp file is written. Otherwise no sidecar file
+// is written.
+// Before generating the checksums, some preparation on the xmpdata is done. For
+// instance, import_timestamp, change_timestamp, export_timestamp and print_timestamp
+// are *not* taken into account for the comparison. Including them leads to unnecessary
+// (re)generation of xmpsider files, which because these file have new timestamps
+// themselves, spoil a regular rsync/backup approach. 
+//================================================================================
 gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
                            const char *filename,
                            const gboolean force_write)
@@ -6290,7 +6190,6 @@ gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
   }
 }
 
-#endif
 dt_colorspaces_color_profile_type_t dt_exif_get_color_space(const uint8_t *data,
                                                             const size_t size)
 {
