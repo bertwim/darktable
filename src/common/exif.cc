@@ -133,7 +133,7 @@ auto _xmp_prepare_for_comparison(Exiv2::XmpData &xmpData) -> std::string
 //      <0>: - the XmpData object.
 //      <1>: - the serialised (encoded) form of <0>.
 //
-// @param filename The name of an xmp-file. It is assumed to exist.
+// @param filename The name of an xmp-file. It is assumed to exist.  
 // @param prepareForComparison. When true, the xmpData object is modified such
 //        that it can be meaningfully compared with other xmpDataobjects.
 //        In particular, this can be used to compare generated checksums.
