@@ -6078,7 +6078,20 @@ gboolean dt_exif_xmp_attach_export(const dt_imgid_t imgid,
   }
 }
 
+//================================================================================
 // Write XMP sidecar file: returns TRUE in case of errors.
+// To decide if an xmp should be written, (possibly overwriting an existing one) the
+// strategy is to compare two checksums
+//   - the checksum corresponding to an xmp-file already on disk, if present.
+//   - the checksum corresponding to the xmp data from the database.
+// If these checksums differ, a new xmp file is written. Otherwise no sidecar file
+// is written.
+// Before generating the checksums, some preparation on the xmpdata is done. For
+// instance, import_timestamp, change_timestamp, export_timestamp and print_timestamp
+// are *not* taken into account for the comparison. Including them leads to unnecessary
+// (re)generation of xmpsider files, which because these file have new timestamps
+// themselves, spoil a regular rsync/backup approach. 
+//================================================================================
 gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
                            const char *filename,
                            const gboolean force_write)
