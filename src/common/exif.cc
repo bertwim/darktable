@@ -85,6 +85,91 @@ using namespace std;
 #define toLong toInt64
 #endif
 
+namespace {
+constexpr auto xml_header{"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"};
+
+//================================================================================
+// Serialize xmpData
+//================================================================================
+auto _xmp_serialise(const Exiv2::XmpData &xmpData) -> std::string
+{
+  std::string xmpPacket;
+
+  using Exiv2::XmpParser;
+  if (0!=XmpParser::encode(xmpPacket, xmpData,
+                           XmpParser::useCompactFormat | XmpParser::omitPacketWrapper))
+  {
+    throw Exiv2::Error(Exiv2::ErrorCode::kerErrorMessage, "[xmp_serialise] failed to serialize");
+  }
+
+  return xmpPacket;
+}
+
+//================================================================================
+// Prepare an XmpData object for comparison, i.e. zero-out those fields in xmpData
+// that should *not* participate in a comparison.
+// Next, a the changed xmpData object is serialised.
+// Finally, the serialised string is sorted. The reason to have this last step is
+// two serialised strings apparently can have two rows interchanged.
+//
+// @param  xmpData. XmpData data object to prepare. It will be changed on return.
+// @return encoded form
+//================================================================================
+auto _xmp_prepare_for_comparison(Exiv2::XmpData &xmpData) -> std::string
+{
+  xmpData["Xmp.darktable.import_timestamp"] = 0;
+  xmpData["Xmp.darktable.change_timestamp"] = 0;
+  xmpData["Xmp.darktable.export_timestamp"] = 0;
+  xmpData["Xmp.darktable.print_timestamp"] = 0;
+
+  auto xmpPacket = _xmp_serialise( xmpData );
+  std::sort(xmpPacket.begin(), xmpPacket.end()); // sort to ignore interchange of two rows.
+
+  return xmpPacket;
+}
+
+//================================================================================
+// Read an Exiv2::XmlData object from an xmp-file. Returns a tuple with
+//      <0>: - the XmpData object.
+//      <1>: - the serialised (encoded) form of <0>.
+//
+// @param filename The name of an xmp-file. It is assumed to exist.  
+// @param prepareForComparison. When true, the xmpData object is modified such
+//        that it can be meaningfully compared with other xmpDataobjects.
+//        In particular, this can be used to compare generated checksums.
+//
+// @return see above.   
+//================================================================================
+auto _xmp_read_from_file(const std::string &filename, bool prepareForComparison)
+    -> std::tuple<Exiv2::XmpData, std::string>
+{
+  Exiv2::DataBuf buf = Exiv2::readFile(WIDEN(filename));
+  Exiv2::XmpData xmpData;
+  std::string xmpPacket;
+
+#if EXIV2_TEST_VERSION(0, 28, 0)
+  xmpPacket.assign(buf.c_str(), buf.size());
+#else
+  xmpPacket.assign(reinterpret_cast<char *>(buf.pData_), buf.size_);
+#endif
+
+  using Exiv2::XmpParser;
+  if (0!=XmpParser::decode(xmpData, xmpPacket))
+  {
+    throw Exiv2::Error(Exiv2::ErrorCode::kerErrorMessage,
+                       "[xmp_read_from_file] failed to decode");
+  }
+     
+  if(prepareForComparison)
+  {
+    xmpPacket = _xmp_prepare_for_comparison(xmpData);
+  }
+
+  return std::make_tuple(xmpData, xmpPacket);
+}
+
+} // namespace
+
 // For these models we can't calculate the correct crop factor or, for some we could, but we
 // prefer to take it from here, rather than complicate the calculation code with exceptions
 static const struct dt_model_cropfactor dt_cropfactors[] = {
@@ -5993,7 +6078,20 @@ gboolean dt_exif_xmp_attach_export(const dt_imgid_t imgid,
   }
 }
 
+//================================================================================
 // Write XMP sidecar file: returns TRUE in case of errors.
+// To decide if an xmp should be written, (possibly overwriting an existing one) the
+// strategy is to compare two checksums
+//   - the checksum corresponding to an xmp-file already on disk, if present.
+//   - the checksum corresponding to the xmp data from the database.
+// If these checksums differ, a new xmp file is written. Otherwise no sidecar file
+// is written.
+// Before generating the checksums, some preparation on the xmpdata is done. For
+// instance, import_timestamp, change_timestamp, export_timestamp and print_timestamp
+// are *not* taken into account for the comparison. Including them leads to unnecessary
+// (re)generation of xmpsider files, which because these file have new timestamps
+// themselves, spoil a regular rsync/backup approach. 
+//================================================================================
 gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
                            const char *filename,
                            const gboolean force_write)
@@ -6009,8 +6107,8 @@ gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
   {
     Lock lock;
     Exiv2::XmpData xmpData;
-    std::string xmpPacket;
     char *checksum_old = NULL;
+
     if(!force_write && g_file_test(filename, G_FILE_TEST_EXISTS))
     {
       // we want to avoid writing the sidecar file if it didn't change
@@ -6018,28 +6116,12 @@ gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
       // computers. Sample use case: images on NAS, several computers
       // using them NOT AT THE SAME TIME and the XMP crawler is used
       // to find changed sidecars.
-      errno = 0;
-      size_t end;
-      unsigned char *content = (unsigned char*)dt_read_file(filename, &end);
-      if(content)
-      {
-        checksum_old = g_compute_checksum_for_data(G_CHECKSUM_MD5, content, end);
-        free(content);
-      }
-      else
-      {
-        dt_print(DT_DEBUG_ALWAYS,
-                 "cannot read XMP file '%s': '%s'", filename, strerror(errno));
-        dt_control_log(_("cannot read XMP file '%s': '%s'"), filename, strerror(errno));
-      }
+      auto [xmpData0, xmpPacket0] = _xmp_read_from_file(filename, true);
+      checksum_old = g_compute_checksum_for_data(G_CHECKSUM_MD5,
+                                                 (unsigned char *)xmpPacket0.c_str(), xmpPacket0.length());
 
-      Exiv2::DataBuf buf = Exiv2::readFile(WIDEN(filename));
-#if EXIV2_TEST_VERSION(0,28,0)
-      xmpPacket.assign(buf.c_str(), buf.size());
-#else
-      xmpPacket.assign(reinterpret_cast<char *>(buf.pData_), buf.size_);
-#endif
-      Exiv2::XmpParser::decode(xmpData, xmpPacket);
+      // Read the xmp-file once again, but now without any additional preparations.
+      std::tie(xmpData, std::ignore) = _xmp_read_from_file(filename, false);
 
       // Because XmpSeq or XmpBag are added to the list, we first have to
       // remove these so that we don't end up with a string of duplicates.
@@ -6049,38 +6131,40 @@ gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
     // Initialize xmp data:
     _exif_xmp_read_data(xmpData, imgid, "dt_exif_xmp_write");
 
-    // Serialize the xmp data and output the xmp packet.
-    if(Exiv2::XmpParser::encode(xmpPacket, xmpData,
-       Exiv2::XmpParser::useCompactFormat | Exiv2::XmpParser::omitPacketWrapper) != 0)
-    {
-      throw Exiv2::Error(Exiv2::ErrorCode::kerErrorMessage, "[xmp_write] failed to serialize xmp data");
-    }
-
     // Hash the new data and compare it to the old hash (if applicable).
-    const char *xml_header = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     gboolean write_sidecar = TRUE;
     if(checksum_old)
     {
-      GChecksum *checksum = g_checksum_new(G_CHECKSUM_MD5);
-      if(checksum)
+      if(GChecksum *checksum = g_checksum_new(G_CHECKSUM_MD5); checksum)
       {
-        g_checksum_update(checksum, (unsigned char*)xml_header, -1);
-        g_checksum_update(checksum, (unsigned char*)xmpPacket.c_str(), -1);
+        // Initialize a new XmpData object, xmpData1, and prepare it for comparison.
+        Exiv2::XmpData xmpData1;
+        _exif_xmp_read_data(xmpData1, imgid, "dt_exif_xmp_write");
+        auto xmpPacket1 = _xmp_prepare_for_comparison(xmpData1);
+
+        g_checksum_update(checksum, (unsigned char *)xmpPacket1.c_str(), -1);
+
         const char *checksum_new = g_checksum_get_string(checksum);
+
+        // Compare checksums.
         write_sidecar = g_strcmp0(checksum_old, checksum_new) != 0;
+
         g_checksum_free(checksum);
       }
+
       g_free(checksum_old);
     }
 
     if(write_sidecar)
     {
+       std::cerr << __LINE__ << ' ' << __LINE__ << ": WRITING NEW XMP:" << filename << std::endl;
       // Using std::ofstream isn't possible here -- on Windows it
       // doesn't support Unicode filenames with mingw.
       errno = 0;
       FILE *fout = g_fopen(filename, "wb");
       if(fout)
       {
+        auto xmpPacket = _xmp_serialise( xmpData );
         fprintf(fout, "%s", xml_header);
         fprintf(fout, "%s", xmpPacket.c_str());
         fclose(fout);
