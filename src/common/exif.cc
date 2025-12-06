@@ -133,12 +133,12 @@ auto _xmp_prepare_for_comparison(Exiv2::XmpData &xmpData) -> std::string
 //      <0>: - the XmpData object.
 //      <1>: - the serialised (encoded) form of <0>.
 //
-// @param filename The name of an xmp-file. It is assumed to exist.  
+// @param filename The name of an xmp-file. It is assumed to exist.
 // @param prepareForComparison. When true, the xmpData object is modified such
 //        that it can be meaningfully compared with other xmpDataobjects.
 //        In particular, this can be used to compare generated checksums.
 //
-// @return see above.   
+// @return see above.
 //================================================================================
 auto _xmp_read_from_file(const std::string &filename, bool prepareForComparison)
     -> std::tuple<Exiv2::XmpData, std::string>
@@ -159,7 +159,7 @@ auto _xmp_read_from_file(const std::string &filename, bool prepareForComparison)
     throw Exiv2::Error(Exiv2::ErrorCode::kerErrorMessage,
                        "[xmp_read_from_file] failed to decode");
   }
-     
+
   if(prepareForComparison)
   {
     xmpPacket = _xmp_prepare_for_comparison(xmpData);
@@ -6090,7 +6090,7 @@ gboolean dt_exif_xmp_attach_export(const dt_imgid_t imgid,
 // instance, import_timestamp, change_timestamp, export_timestamp and print_timestamp
 // are *not* taken into account for the comparison. Including them leads to unnecessary
 // (re)generation of xmpsider files, which because these file have new timestamps
-// themselves, spoil a regular rsync/backup approach. 
+// themselves, spoil a regular rsync/backup approach.
 //================================================================================
 gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
                            const char *filename,
