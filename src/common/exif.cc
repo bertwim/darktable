@@ -6090,11 +6090,7 @@ gboolean dt_exif_xmp_attach_export(const dt_imgid_t imgid,
 // instance, import_timestamp, change_timestamp, export_timestamp and print_timestamp
 // are *not* taken into account for the comparison. Including them leads to unnecessary
 // (re)generation of xmpsider files, which because these file have new timestamps
-<<<<<<< HEAD
 // themselves, spoil a regular rsync/backup approach.
-=======
-// themselves, spoil a regular rsync/backup approach. 
->>>>>>> fa77a48520 (Changed the logic to decide if a new xmp sidecar file should be written.)
 //================================================================================
 gboolean dt_exif_xmp_write(const dt_imgid_t imgid,
                            const char *filename,
